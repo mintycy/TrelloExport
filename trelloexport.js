@@ -3,6 +3,8 @@
  *
  * A Chrome extension for Trello, that allows to export boards to Excel spreadsheets, HTML with Twig templates, Markdown and OPML.
  *
+ * Forked by minty 
+ *  https://github.com/mintycy/TrelloExport
  * Forked by @trapias (Alberto Velo)
  *  https://github.com/trapias/trelloExport
  * From:
@@ -224,8 +226,10 @@
 * Whatsnew for v. 1.9.62:
     - fix issue #55, Export Done and Done By is missing for archived cards
     - sort labels alphabetically
+* Whatsnew for v. 1.9.62.1:
+    - add split by list name to excel sheets
 */
-var VERSION = '1.9.62';
+var VERSION = '1.9.62.1';
 
 // TWIG templates definition
 var availableTwigTemplates = [
@@ -265,6 +269,7 @@ function CleanLocalStorage() {
     localStorage.TrelloExportMode = '';
     localStorage.TrelloExportListDone = '';
     localStorage.TrelloExportType = '';
+	localStorage.TrelloExportSplit = '';	
     localStorage.TrelloExportTwigTemplate = '';
     localStorage.TrelloExportTwigTemplatesURL = '';
     localStorage.TrelloExportSelectedColumns = '';
@@ -554,7 +559,7 @@ function getMoveCardAction(boardID, idCard, nameList) {
                     return x.date;
                 })
                 .ToArray();
-            console.log('query.length: ' + query.length);
+            //console.log('query.length: ' + query.length);
             return query.length > 0 ? query[0] : false;
         }
     }
@@ -671,6 +676,10 @@ function TrelloExportOptions() {
     if (localStorage.TrelloExportType)
         selectedType = localStorage.TrelloExportType;
 
+	var selectedSplit = 'nosplit';
+    if (localStorage.TrelloExportSplit)
+        selectedSplit = localStorage.TrelloExportSplit;
+	
     var twigTemplate = chrome.extension.getURL('/templates/html.twig');
     if (localStorage.TrelloExportTwigTemplate)
         twigTemplate = localStorage.TrelloExportTwigTemplate;
@@ -743,13 +752,14 @@ function TrelloExportOptions() {
     });
 
     modal.setContent(sDialog);
-    modal.setFooterContent('<span class="sponsor"><a target="_new" href="https://bridge24.com/trello/?afmc=1w">Need interactive charts or custom reports for your cards? Try Bridge24! <img src="https://bridge24.com/wp-content/uploads/2017/12/bridge24-logo-header_dark-grey_2x.png" /></a></span>');
+    modal.setFooterContent('');
     modal.addFooterBtn('Close', 'tingle-btn tingle-btn--default tingle-btn--pull-right', function() {
         modal.close();
     });
     modal.addFooterBtn('Export', 'tingle-btn tingle-btn--trelloexport tingle-btn--pull-right', function() {
         var mode = $('#exportmode').val();
         localStorage.TrelloExportMode = mode;
+		var sexportsplit =  localStorage.TrelloExportSplit;
         nameListDone = $('#setnameListDone').val();
         localStorage.TrelloExportListDone = nameListDone;
         var sfilterListsNames, filters, bexportArchived, bExportComments, bExportChecklists, bExportAttachments, iExcelItemsAsRows, bckHTMLCardInfo, bchkHTMLInlineImages;
@@ -818,6 +828,9 @@ function TrelloExportOptions() {
             case 'board':
                 $('#choosenboards > option:selected').each(function() {
                     exportboards.push($(this).val());
+					sexportsplit = $('#splitmode').val();
+                    console.log('sexportsplit = '+sexportsplit);
+					
                 });
                 break;
 
@@ -854,7 +867,7 @@ function TrelloExportOptions() {
 
         // launch export
         setTimeout(function() {
-            loadData(mode, bexportArchived, bExportComments, bExportChecklists, bExportAttachments, iExcelItemsAsRows, bckHTMLCardInfo, bchkHTMLInlineImages, allColumns, selectedColumns, css, filterMode, bExportCustomFields, templateURL, chkANDORFilter);
+            loadData(mode, bexportArchived, bExportComments, bExportChecklists, bExportAttachments, iExcelItemsAsRows, bckHTMLCardInfo, bchkHTMLInlineImages, allColumns, selectedColumns, css, filterMode, bExportCustomFields, templateURL, chkANDORFilter,sexportsplit);
         }, 500);
         modal.close();
     });
@@ -927,7 +940,11 @@ function TrelloExportOptions() {
                 console.error('ERROR: ' + err);
             });
         });
-
+        $('#splitmode').on('change', function() {
+            var sexportsplit = $('#splitmode').val();
+            localStorage.TrelloExportSplit = sexportsplit;
+			
+		});
         $('#exporttype').on('change', function() {
             $('#advancedOptions').remove();
             var sexporttype = $('#exporttype').val();
@@ -942,7 +959,7 @@ function TrelloExportOptions() {
                     $('#optionslist').append('<tr><td>Select one or more Lists</td><td><select multiple id="choosenlist">' + sSelect + '</select></td></tr>');
                     break;
                 case 'board':
-                    // $('#optionslist').append('<tr><td>Filter lists by name:</td><td><input type="text" size="4" name="filterListsNames" class="filterListsNames" value="" placeholder="Set string or leave empty"></td></tr>');
+                    $('#optionslist').append('<tr><td>split by what:</td><td><select id="splitmode"><option value="nosplit" selected>不切</option><option value="list" >list</option></select></td></tr>');
                     break;
                 case 'boards':
                     // get a list of all boards
@@ -1238,6 +1255,7 @@ function lookupCustomDataValue(key, cardCFValue) {
 
 function resetOptions() {
     $('#choosenlist').parent().parent().remove();
+	$('#splitmode').parent().parent().remove();
     $('#choosenboards').parent().parent().remove();
     $('#choosenCards').parent().parent().remove();
     $('#choosenSinglelist').parent().parent().remove();
@@ -1487,8 +1505,8 @@ function extractFloat(str, regex, groupIndex) {
     return value;
 }
 
-function loadData(exportFormat, bexportArchived, bExportComments, bExportChecklists, bExportAttachments, iExcelItemsAsRows, bckHTMLCardInfo, bchkHTMLInlineImages, allColumns, selectedColumns, css, filterMode, bExportCustomFields, templateURL, chkANDORFilter) {
-    console.log('TrelloExport loading data, export format: ' + exportFormat + '...');
+function loadData(exportFormat, bexportArchived, bExportComments, bExportChecklists, bExportAttachments, iExcelItemsAsRows, bckHTMLCardInfo, bchkHTMLInlineImages, allColumns, selectedColumns, css, filterMode, bExportCustomFields, templateURL, chkANDORFilter,sexportsplit) {
+    console.log('TrelloExport loading data, export format: ' + exportFormat + '...'+sexportsplit);
     var converter = new showdown.Converter();
     var promLoadData = new Promise(
         function(resolve, reject) {
@@ -1686,7 +1704,7 @@ function loadData(exportFormat, bexportArchived, bExportComments, bExportCheckli
                                             exportedCardsIDs.push(card.id);
                                             var title = card.name;
 
-                                            console.log(i + ') Card #' + card.idShort + ' ' + title + ' (' + card.id + ') - POS: ' + card.pos);
+                                            //console.log(i + ') Card #' + card.idShort + ' ' + title + ' (' + card.id + ') - POS: ' + card.pos);
                                             nProcessedCards++;
 
                                             var spent = 0;
@@ -1972,7 +1990,7 @@ function loadData(exportFormat, bexportArchived, bExportComments, bExportCheckli
                                                             return x.date;
                                                         })
                                                         .ToArray();
-                                                    console.log('query.length: ' + query.length);
+                                                    //console.log('query.length: ' + query.length);
                                                     if (query.length > 0 && query[0].memberCreator !== undefined) {
                                                         memberDone = (query[0].memberCreator.fullName !== undefined ? query[0].memberCreator.fullName : query[0].memberCreator.username);
                                                         datetimeDone = query[0].date;
@@ -2158,6 +2176,7 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
 
     // prepare Workbook
     var wb = new Workbook();
+	sheets = {};
     wArchived = {};
     wArchived.name = 'Archived lists and cards';
     wArchived.data = [];
@@ -2165,18 +2184,25 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
     wArchived.data[0] = columnHeadings;
 
     // Setup the active list and cart worksheet
-    w = {};
+//    w = {};
     // if(data.name.length>30)
     //     w.name = data.name.substr(0,30);
     // else
     //     w.name = data.name;
-    w.data = [];
-    w.data.push([]);
-    w.data[0] = columnHeadings;
+//    w.data = [];
+//    w.data.push([]);
+//    w.data[0] = columnHeadings;
 
     // loop jsonComputedCards
     jsonComputedCards.forEach(function(card) {
 
+		if(!sheets.hasOwnProperty(card.listName))
+		{
+			sheets[card.listName] = {};
+			sheets[card.listName].data = [];
+			sheets[card.listName].data.push([]);
+			sheets[card.listName].data[0] = columnHeadings;
+		}
         var toStringArray = [];
         var nTotalCheckListItems = 0,
             nTotalCheckListItemsCompleted = 0;
@@ -2306,8 +2332,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                     var rArch = wArchived.data.push([]) - 1;
                     wArchived.data[rArch] = toStringArray;
                 } else {
-                    var r = w.data.push([]) - 1;
-                    w.data[r] = toStringArray;
+                    var r = sheets[card.listName].data.push([]) - 1;
+                    sheets[card.listName].data[r] = toStringArray;
                 }
                 break;
 
@@ -2447,8 +2473,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                                 var rArch2 = wArchived.data.push([]) - 1;
                                 wArchived.data[rArch2] = toStringArray;
                             } else {
-                                var r2 = w.data.push([]) - 1;
-                                w.data[r2] = toStringArray;
+                                var r2 = sheets[card.listName].data.push([]) - 1;
+                                sheets[card.listName].data[r2] = toStringArray;
                             }
 
                         });
@@ -2576,8 +2602,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                         var rArch2 = wArchived.data.push([]) - 1;
                         wArchived.data[rArch2] = toStringArray;
                     } else {
-                        var r2 = w.data.push([]) - 1;
-                        w.data[r2] = toStringArray;
+                        var r2 = sheets[card.listName].data.push([]) - 1;
+                        sheets[card.listName].data[r2] = toStringArray;
                     }
                 }
                 break;
@@ -2695,8 +2721,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                             var rArch2 = wArchived.data.push([]) - 1;
                             wArchived.data[rArch2] = toStringArray;
                         } else {
-                            var r2 = w.data.push([]) - 1;
-                            w.data[r2] = toStringArray;
+                            var r2 = sheets[card.listName].data.push([]) - 1;
+                            sheets[card.listName].data[r2] = toStringArray;
                         }
 
                     });
@@ -2823,8 +2849,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                         var lblrArch2 = wArchived.data.push([]) - 1;
                         wArchived.data[lblrArch2] = toStringArray;
                     } else {
-                        var lblr2 = w.data.push([]) - 1;
-                        w.data[lblr2] = toStringArray;
+                        var lblr2 = sheets[card.listName].data.push([]) - 1;
+                        sheets[card.listName].data[lblr2] = toStringArray;
                     }
                 }
                 break;
@@ -2942,8 +2968,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                             var rArch2 = wArchived.data.push([]) - 1;
                             wArchived.data[rArch2] = toStringArray;
                         } else {
-                            var r2 = w.data.push([]) - 1;
-                            w.data[r2] = toStringArray;
+                            var r2 = sheets[card.listName].data.push([]) - 1;
+                            sheets[card.listName].data[r2] = toStringArray;
                         }
 
                     });
@@ -3070,8 +3096,8 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
                         var lblrArch3 = wArchived.data.push([]) - 1;
                         wArchived.data[lblrArch3] = toStringArray;
                     } else {
-                        var lblr3 = w.data.push([]) - 1;
-                        w.data[lblr3] = toStringArray;
+                        var lblr3 = sheets[card.listName].data.push([]) - 1;
+                        sheets[card.listName].data[lblr3] = toStringArray;
                     }
                 }
                 break;
@@ -3083,14 +3109,15 @@ function createExcelExport(jsonComputedCards, iExcelItemsAsRows, allColumns, col
 
     });
 
-    var board_title = "TrelloExport";
-    var ws = sheet_from_array_of_arrays(w.data);
+	Object.keys(sheets).forEach(function (key) {
+		var board_title = key;
+		var ws = sheet_from_array_of_arrays(sheets[key].data);
 
-    // add worksheet to workbook
-    wb.SheetNames.push(board_title);
-    wb.Sheets[board_title] = ws;
-    console.log("Added sheet " + board_title);
-
+		// add worksheet to workbook
+		wb.SheetNames.push(board_title);
+		wb.Sheets[board_title] = ws;
+		console.log("Added sheet " + board_title);
+    });
     //add the Archived data
     var wsArchived = sheet_from_array_of_arrays(wArchived.data);
     if (wsArchived !== undefined) {
